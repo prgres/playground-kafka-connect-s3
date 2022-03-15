@@ -1,0 +1,13 @@
+services:
+  kafka-connect:
+    build:
+      context: .
+      dockerfile: kafka-connect.dockerfile
+    environment:
+    - CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL="<REPLACE_ME>"
+    - CONNECT_KEY_CONVERTER_SCHEMA_REGISTRY_URL="<REPLACE_ME>"
+    - CONNECT_REST_ADVERTISED_HOST_NAME="<REPLACE_ME>"
+    - CONNECT_BOOTSTRAP_SERVERS="<REPLACE_ME>"
+    - SCHEMA_REGISTRY_URL="<REPLACE_ME>"
+    - CONNECT_REST_PORT="<REPLACE_ME>"
+    - KAFKA_HEAP_OPTS="<REPLACE_ME>"
