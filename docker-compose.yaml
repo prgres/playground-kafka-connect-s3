@@ -1,13 +1,186 @@
+# https://raw.githubusercontent.com/tchiotludo/akhq/master/docker-compose.yml
+# https://github.com/tchiotludo/akhq/blob/dev/docker-compose-multiple-clusters.yml
+# https://github.com/tchiotludo/akhq/blob/dev/docker-compose-dev.yml
+
+# TODO:
+#   * healtcheck for kafka and zookper
+#   * proper depends_on configuration (maybe use docker swarm)
+#   * a second cluster
+
+networks:
+  app-tier:
+    driver: bridge
+
+volumes:
+  vol-kafka1:
+  vol-zookeeper1:
+
 services:
-  kafka-connect:
-    build:
-      context: .
-      dockerfile: kafka-connect.dockerfile
+
+  # utils
+  awscli:
+    # example usage:
+    #   $ docker exec -it <container_id> /bin/bash
+    #   $ aws --endpoint=${AWS_ENDPOINT} s3 ls
+    image: amazon/aws-cli:2.4.26
+    networks:
+      - app-tier
     environment:
-    - CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL="<REPLACE_ME>"
-    - CONNECT_KEY_CONVERTER_SCHEMA_REGISTRY_URL="<REPLACE_ME>"
-    - CONNECT_REST_ADVERTISED_HOST_NAME="<REPLACE_ME>"
-    - CONNECT_BOOTSTRAP_SERVERS="<REPLACE_ME>"
-    - SCHEMA_REGISTRY_URL="<REPLACE_ME>"
-    - CONNECT_REST_PORT="<REPLACE_ME>"
-    - KAFKA_HEAP_OPTS="<REPLACE_ME>"
+      AWS_ACCESS_KEY_ID: dummy-key-id
+      AWS_SECRET_ACCESS_KEY: dummy-secret-key
+      AWS_ENDPOINT: http://localstack:4566
+    entrypoint: [ /bin/bash, -c, while true; do sleep 30; done; ]
+
+  localstack:
+    image: localstack/localstack:0.14.1 # localstack/localstack-full:0.14.1
+    networks:
+      - app-tier
+    ports:
+      - 4510-4559:4510-4559
+      - 4566:4566
+    environment:
+      AWS_DEFAULT_REGION: us-east-1
+      SERVICES: s3
+      DOCKER_HOST: unix:///var/run/docker.sock
+      S3_PORT_EXTERNAL: 4567
+      KAFKA_CONNECT_S3_BUCKET: kafka-connect-s3
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp/localstack:/tmp/localstack
+      - ./localstack:/docker-entrypoint-initaws.d
+
+  akhq:
+    image: tchiotludo/akhq:0.20.0
+    restart: always
+    networks:
+      - app-tier
+    ports:
+      - 8080:8080
+    depends_on:
+      - kafka1
+      - schema-registry
+      - kafka-connect
+    environment:
+      AKHQ_CONFIGURATION: |
+        akhq:
+          connections:
+            docker-kafka-server:
+              properties:
+                bootstrap.servers: kafka1:9092
+              schema-registry:
+                url: http://schema-registry:8085
+              connect:
+                - name: kafka-connect
+                  url: http://kafka-connect:28082
+
+# CLUSTER 1
+  kafka-connect:
+    # https://hub.docker.com/r/confluentinc/cp-kafka-connect
+    image: playground-kafka-connect
+    build:
+      context: ./kafka-connect/
+      dockerfile: ./kafka-connect.dockerfile
+    restart: always
+    networks:
+      - app-tier
+    ports:
+      - 28082:28082
+    depends_on:
+      - kafka1
+      - schema-registry
+    environment:
+      ## localstack
+      AWS_ACCESS_KEY_ID: dummy-key-id
+      AWS_SECRET_ACCESS_KEY: dummy-secret-key
+      ##
+      CONNECT_BOOTSTRAP_SERVERS: kafka1:9092
+      CONNECT_REST_PORT: 28082
+      CONNECT_HOST_NAME: kafka-connect
+      CONNECT_LISTENERS: http://kafka-connect:28082
+      CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect
+      CONNECT_REST_LISTENERS: http://kafka-connect:28082
+      SCHEMA_REGISTRY_URL: schema-registry:8085
+      CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8085
+      CONNECT_KEY_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8085
+      CONNECT_LOG4J_ROOT_LOGLEVEL: INFO
+      CONNECT_GROUP_ID: kafka-connect
+      CONNECT_CONFIG_STORAGE_TOPIC: kafka-connect-config
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_TOPIC: kafka-connect-offset
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_TOPIC: kafka-connect-status
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_KEY_CONVERTER: io.confluent.connect.avro.AvroConverter
+      CONNECT_VALUE_CONVERTER: io.confluent.connect.avro.AvroConverter
+      CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components
+      KAFKA_HEAP_OPTS: -Xms3g -Xmx4g
+
+  kafka-connect-connector-config:
+    image: playground-kafka-connect-connector-config
+    build:
+      context: ./kafka-connect/
+      dockerfile: ./connector-config.dockerfile
+    networks:
+      - app-tier
+    depends_on:
+      - kafka-connect
+    environment:
+      CONNECT_REST_PORT: 28082
+      CONNECT_HOST_NAME: kafka-connect
+      S3_CONN_BUCKET_NAME: kafka-connect-s3
+      S3_CONN_STORE_URL: http://localstack:4566
+      SCHEMA_REGISTRY_URL: http://schema-registry:8085
+
+  schema-registry:
+    # https://hub.docker.com/r/confluentinc/cp-schema-registry
+    # https://docs.confluent.io/platform/current/schema-registry/index.html
+    image: confluentinc/cp-schema-registry:7.0.1
+    restart: always
+    networks:
+      - app-tier
+    ports:
+      - 8085:8085
+    depends_on:
+      - kafka1
+    environment:
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka1:9092
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_LISTENERS: http://schema-registry:8085
+      SCHEMA_REGISTRY_LOG4J_ROOT_LOGLEVEL: INFO
+
+  kafka1:
+    # https://hub.docker.com/r/confluentinc/cp-kafka
+    image: confluentinc/cp-kafka:7.0.1
+    restart: always
+    networks:
+      - app-tier
+    ports:
+      - 9092:9092
+    depends_on:
+      - zookeeper1
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper1:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka1:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_HEAP_OPTS: -Xms3g -Xmx4g
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes:
+      - vol-kafka1:/var/lib/kafka
+
+  zookeeper1:
+    # https://hub.docker.com/r/confluentinc/cp-zookeeper
+    # https://docs.confluent.io/platform/current/installation/docker/config-reference.html#zk-configuration
+    image: confluentinc/cp-zookeeper:7.0.1
+    restart: always
+    networks:
+      - app-tier
+    ports:
+      - 2181:2181
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_SERVER_ID: 1
+    volumes:
+      - vol-zookeeper1:/var/lib/zookeeper/data
+
+# CLUSTER 2
