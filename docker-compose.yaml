@@ -12,8 +12,12 @@ networks:
     driver: bridge
 
 volumes:
-  vol-kafka1:
-  vol-zookeeper1:
+  vol-kafka1_1:
+  vol-kafka1_2:
+  vol-kafka1_3:
+  vol-zookeeper1_1:
+  vol-zookeeper1_2:
+  vol-zookeeper1_3:
 
 services:
 
@@ -57,8 +61,10 @@ services:
     ports:
       - 8080:8080
     depends_on:
-      - kafka1
-      - schema-registry
+      - kafka1_1
+      - kafka1_2
+      - kafka1_3
+      - schema-registry1_1
       - kafka-connect
     environment:
       AKHQ_CONFIGURATION: |
@@ -66,9 +72,9 @@ services:
           connections:
             docker-kafka-server:
               properties:
-                bootstrap.servers: kafka1:9092
+                bootstrap.servers: kafka1_1:9092,kafka1_2:9093,kafka1_3:9094
               schema-registry:
-                url: http://schema-registry:8085
+                url: http://schema-registry1_1:8085
               connect:
                 - name: kafka-connect
                   url: http://kafka-connect:28082
@@ -86,22 +92,24 @@ services:
     ports:
       - 28082:28082
     depends_on:
-      - kafka1
-      - schema-registry
+      - kafka1_1
+      - kafka1_2
+      - kafka1_3
+      - schema-registry1_1
     environment:
       ## localstack
       AWS_ACCESS_KEY_ID: dummy-key-id
       AWS_SECRET_ACCESS_KEY: dummy-secret-key
       ##
-      CONNECT_BOOTSTRAP_SERVERS: kafka1:9092
+      CONNECT_BOOTSTRAP_SERVERS: kafka1_1:9092,kafka1_2:9093,kafka1_3:9094
       CONNECT_REST_PORT: 28082
       CONNECT_HOST_NAME: kafka-connect
       CONNECT_LISTENERS: http://kafka-connect:28082
       CONNECT_REST_ADVERTISED_HOST_NAME: kafka-connect
       CONNECT_REST_LISTENERS: http://kafka-connect:28082
-      SCHEMA_REGISTRY_URL: schema-registry:8085
-      CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8085
-      CONNECT_KEY_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry:8085
+      SCHEMA_REGISTRY_URL: schema-registry1_1:8085
+      CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry1_1:8085
+      CONNECT_KEY_CONVERTER_SCHEMA_REGISTRY_URL: http://schema-registry1_1:8085
       CONNECT_LOG4J_ROOT_LOGLEVEL: INFO
       CONNECT_GROUP_ID: kafka-connect
       CONNECT_CONFIG_STORAGE_TOPIC: kafka-connect-config
@@ -131,7 +139,7 @@ services:
       S3_CONN_STORE_URL: http://localstack:4566
       SCHEMA_REGISTRY_URL: http://schema-registry:8085
 
-  schema-registry:
+  schema-registry1_1:
     # https://hub.docker.com/r/confluentinc/cp-schema-registry
     # https://docs.confluent.io/platform/current/schema-registry/index.html
     image: confluentinc/cp-schema-registry:7.0.1
@@ -141,14 +149,16 @@ services:
     ports:
       - 8085:8085
     depends_on:
-      - kafka1
+      - kafka1_1
+      - kafka1_2
+      - kafka1_3
     environment:
-      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka1:9092
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://zookeeper1_1:2181,PLAINTEXT://zookeeper1_2:2182,PLAINTEXT://zookeeper1_3:2183
       SCHEMA_REGISTRY_HOST_NAME: schema-registry
-      SCHEMA_REGISTRY_LISTENERS: http://schema-registry:8085
+      SCHEMA_REGISTRY_LISTENERS: http://schema-registry1_1:8085
       SCHEMA_REGISTRY_LOG4J_ROOT_LOGLEVEL: INFO
 
-  kafka1:
+  kafka1_1:
     # https://hub.docker.com/r/confluentinc/cp-kafka
     image: confluentinc/cp-kafka:7.0.1
     restart: always
@@ -157,18 +167,64 @@ services:
     ports:
       - 9092:9092
     depends_on:
-      - zookeeper1
+      - zookeeper1_1
+      - zookeeper1_2
+      - zookeeper1_3
     environment:
       KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper1:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka1:9092
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper1_1:2181,zookeeper1_2:2182,zookeeper1_3:2183
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka1_1:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_HEAP_OPTS: -Xms3g -Xmx4g
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
     volumes:
-      - vol-kafka1:/var/lib/kafka
+      - vol-kafka1_1:/var/lib/kafka
 
-  zookeeper1:
+  kafka1_2:
+    # https://hub.docker.com/r/confluentinc/cp-kafka
+    image: confluentinc/cp-kafka:7.0.1
+    restart: always
+    networks:
+      - app-tier
+    ports:
+      - 9093:9092
+    depends_on:
+      - zookeeper1_1
+      - zookeeper1_2
+      - zookeeper1_3
+    environment:
+      KAFKA_BROKER_ID: 2
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper1_1:2181,zookeeper1_2:2182,zookeeper1_3:2183
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka1_2:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_HEAP_OPTS: -Xms3g -Xmx4g
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes:
+      - vol-kafka1_2:/var/lib/kafka
+
+  kafka1_3:
+    # https://hub.docker.com/r/confluentinc/cp-kafka
+    image: confluentinc/cp-kafka:7.0.1
+    restart: always
+    networks:
+      - app-tier
+    ports:
+      - 9094:9092
+    depends_on:
+      - zookeeper1_1
+      - zookeeper1_2
+      - zookeeper1_3
+    environment:
+      KAFKA_BROKER_ID: 3
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper1_1:2181,zookeeper1_2:2182,zookeeper1_3:2183
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka1_3:9094
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_HEAP_OPTS: -Xms3g -Xmx4g
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes:
+      - vol-kafka1_3:/var/lib/kafka
+
+  zookeeper1_1:
     # https://hub.docker.com/r/confluentinc/cp-zookeeper
     # https://docs.confluent.io/platform/current/installation/docker/config-reference.html#zk-configuration
     image: confluentinc/cp-zookeeper:7.0.1
@@ -177,10 +233,49 @@ services:
       - app-tier
     ports:
       - 2181:2181
+      - 2887:2888
+      - 3887:3888
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_SERVER_ID: 1
+      ZOOKEEPER_SERVERS: zookeeper1_1:2887:3887;zookeeper1_2:2888:3888;zookeeper1_3:2889:3889
     volumes:
-      - vol-zookeeper1:/var/lib/zookeeper/data
+      - vol-zookeeper1_1:/var/lib/zookeeper/data
+
+  zookeeper1_2:
+    # https://hub.docker.com/r/confluentinc/cp-zookeeper
+    # https://docs.confluent.io/platform/current/installation/docker/config-reference.html#zk-configuration
+    image: confluentinc/cp-zookeeper:7.0.1
+    restart: always
+    networks:
+      - app-tier
+    ports:
+      - 2182:2181
+      - 2888:2888
+      - 3888:3888
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_SERVER_ID: 2
+      ZOOKEEPER_SERVERS: zookeeper1_1:2887:3887;zookeeper1_2:2888:3888;zookeeper1_3:2889:3889
+    volumes:
+      - vol-zookeeper1_2:/var/lib/zookeeper/data
+
+  zookeeper1_3:
+    # https://hub.docker.com/r/confluentinc/cp-zookeeper
+    # https://docs.confluent.io/platform/current/installation/docker/config-reference.html#zk-configuration
+    image: confluentinc/cp-zookeeper:7.0.1
+    restart: always
+    networks:
+      - app-tier
+    ports:
+      - 2183:2181
+      - 2889:2888
+      - 3889:3888
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_SERVER_ID: 3
+      ZOOKEEPER_SERVERS: zookeeper1_1:2887:3887;zookeeper1_2:2888:3888;zookeeper1_3:2889:3889
+    volumes:
+      - vol-zookeeper1_3:/var/lib/zookeeper/data
 
 # CLUSTER 2
